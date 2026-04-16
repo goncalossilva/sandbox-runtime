@@ -12,8 +12,11 @@ import {
   globToRegex,
   DANGEROUS_FILES,
   getDangerousDirectories,
+  getGitCommonDirDenyPaths,
+  resolveGitCommonDirWriteAccess,
 } from './sandbox-utils.js'
 
+import type { GitDirs } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
   FsWriteRestrictionConfig,
@@ -34,6 +37,7 @@ export interface MacOSSandboxParams {
   ignoreViolations?: IgnoreViolationsConfig | undefined
   allowPty?: boolean
   allowGitConfig?: boolean
+  allowGitCommonDir?: boolean
   enableWeakerNetworkIsolation?: boolean
   binShell?: string
 }
@@ -42,7 +46,10 @@ export interface MacOSSandboxParams {
  * Get mandatory deny patterns as glob patterns (no filesystem scanning).
  * macOS sandbox profile supports regex/glob matching directly via globToRegex().
  */
-export function macGetMandatoryDenyPatterns(allowGitConfig = false): string[] {
+export function macGetMandatoryDenyPatterns(
+  allowGitConfig = false,
+  gitDirs?: GitDirs,
+): string[] {
   const cwd = process.cwd()
   const denyPaths: string[] = []
 
@@ -67,6 +74,8 @@ export function macGetMandatoryDenyPatterns(allowGitConfig = false): string[] {
     denyPaths.push(path.resolve(cwd, '.git/config'))
     denyPaths.push('**/.git/config')
   }
+
+  denyPaths.push(...getGitCommonDirDenyPaths(gitDirs, allowGitConfig))
 
   return [...new Set(denyPaths)]
 }
@@ -327,7 +336,8 @@ function generateReadRules(
 function generateWriteRules(
   config: FsWriteRestrictionConfig | undefined,
   logTag: string,
-  allowGitConfig = false,
+  allowPaths: string[],
+  denyPaths: string[],
 ): string[] {
   if (!config) {
     return [`(allow file-write*)`]
@@ -336,7 +346,7 @@ function generateWriteRules(
   const rules: string[] = []
 
   // Generate allow rules
-  for (const pathPattern of config.allowOnly || []) {
+  for (const pathPattern of allowPaths) {
     const normalizedPath = normalizePathForSandbox(pathPattern)
 
     if (containsGlobChars(normalizedPath)) {
@@ -356,12 +366,6 @@ function generateWriteRules(
       )
     }
   }
-
-  // Combine user-specified and mandatory deny patterns (no ripgrep needed on macOS)
-  const denyPaths = [
-    ...(config.denyWithinAllow || []),
-    ...macGetMandatoryDenyPatterns(allowGitConfig),
-  ]
 
   for (const pathPattern of denyPaths) {
     const normalizedPath = normalizePathForSandbox(pathPattern)
@@ -405,6 +409,7 @@ function generateSandboxProfile({
   allowMachLookup,
   allowPty,
   allowGitConfig = false,
+  allowGitCommonDir = false,
   enableWeakerNetworkIsolation = false,
   logTag,
 }: {
@@ -419,6 +424,7 @@ function generateSandboxProfile({
   allowMachLookup?: string[]
   allowPty?: boolean
   allowGitConfig?: boolean
+  allowGitCommonDir?: boolean
   enableWeakerNetworkIsolation?: boolean
   logTag: string
 }): string {
@@ -661,17 +667,39 @@ function generateSandboxProfile({
   }
   profile.push('')
 
+  const {
+    allowPaths: writeAllowPaths,
+    denyPaths: gitWriteDenyPaths,
+  } = resolveGitCommonDirWriteAccess(
+    writeConfig?.allowOnly,
+    allowGitCommonDir,
+    allowGitConfig,
+  )
+  const writeDenyPaths = [
+    ...new Set([
+      ...macGetMandatoryDenyPatterns(allowGitConfig),
+      ...(writeConfig?.denyWithinAllow || []),
+      ...gitWriteDenyPaths,
+    ]),
+  ]
+
   // Read rules
   // Pass write-allowed paths so that move-blocking deny rules in the read section
   // can be overridden for paths where file deletion should be permitted.
-  const writeAllowPaths = writeConfig?.allowOnly
   profile.push('; File read')
   profile.push(...generateReadRules(readConfig, logTag, writeAllowPaths))
   profile.push('')
 
   // Write rules
   profile.push('; File write')
-  profile.push(...generateWriteRules(writeConfig, logTag, allowGitConfig))
+  profile.push(
+    ...generateWriteRules(
+      writeConfig,
+      logTag,
+      writeAllowPaths || [],
+      writeDenyPaths,
+    ),
+  )
 
   // Pseudo-terminal (pty) support
   if (allowPty) {
@@ -717,6 +745,7 @@ export function wrapCommandWithSandboxMacOS(
     writeConfig,
     allowPty,
     allowGitConfig = false,
+    allowGitCommonDir = false,
     enableWeakerNetworkIsolation = false,
     binShell,
   } = params
@@ -750,6 +779,7 @@ export function wrapCommandWithSandboxMacOS(
     allowMachLookup,
     allowPty,
     allowGitConfig,
+    allowGitCommonDir,
     enableWeakerNetworkIsolation,
     logTag,
   })

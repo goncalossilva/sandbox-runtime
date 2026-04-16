@@ -29,6 +29,7 @@ import {
   containsGlobChars,
   removeTrailingGlobSuffix,
   expandGlobPattern,
+  resolveGitCommonDirWriteAccess,
 } from './sandbox-utils.js'
 import { SandboxViolationStore } from './sandbox-violation-store.js'
 import {
@@ -469,10 +470,14 @@ function getFsWriteConfig(): FsWriteRestrictionConfig {
     })
 
   // Build allowOnly list: default paths + configured allow paths
-  const allowOnly = [...getDefaultWritePaths(), ...allowPaths]
+  const { allowPaths: allowOnly } = resolveGitCommonDirWriteAccess(
+    [...getDefaultWritePaths(), ...allowPaths],
+    config.filesystem.allowGitCommonDir ?? false,
+    config.filesystem.allowGitConfig ?? false,
+  )
 
   return {
-    allowOnly,
+    allowOnly: allowOnly || [],
     denyWithinAllow: denyPaths,
   }
 }
@@ -659,6 +664,10 @@ async function wrapWithSandbox(
 
   // Check custom config to allow pseudo-terminal (can be applied dynamically)
   const allowPty = customConfig?.allowPty ?? config?.allowPty
+  const allowGitCommonDir =
+    customConfig?.filesystem?.allowGitCommonDir ??
+    config?.filesystem?.allowGitCommonDir ??
+    false
 
   switch (platform) {
     case 'macos':
@@ -678,6 +687,7 @@ async function wrapWithSandbox(
         ignoreViolations: getIgnoreViolations(),
         allowPty,
         allowGitConfig: getAllowGitConfig(),
+        allowGitCommonDir,
         enableWeakerNetworkIsolation: getEnableWeakerNetworkIsolation(),
         binShell,
       })
@@ -707,6 +717,7 @@ async function wrapWithSandbox(
         ripgrepConfig: getRipgrepConfig(),
         mandatoryDenySearchDepth: getMandatoryDenySearchDepth(),
         allowGitConfig: getAllowGitConfig(),
+        allowGitCommonDir,
         seccompConfig: getSeccompConfig(),
         abortSignal,
       })

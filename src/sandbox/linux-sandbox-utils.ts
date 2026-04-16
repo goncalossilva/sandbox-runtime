@@ -15,6 +15,7 @@ import {
   isSymlinkOutsideBoundary,
   DANGEROUS_FILES,
   getDangerousDirectories,
+  resolveGitCommonDirWriteAccess,
 } from './sandbox-utils.js'
 import type {
   FsReadRestrictionConfig,
@@ -49,6 +50,8 @@ export interface LinuxSandboxParams {
   mandatoryDenySearchDepth?: number
   /** Allow writes to .git/config files (default: false) */
   allowGitConfig?: boolean
+  /** Linked worktrees only: allow writes to the git common dir (default: false) */
+  allowGitCommonDir?: boolean
   /** Custom seccomp binary paths */
   seccompConfig?: SeccompConfig
   /** Abort signal to cancel the ripgrep scan */
@@ -161,6 +164,7 @@ async function linuxGetMandatoryDenyPaths(
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   maxDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   allowGitConfig = false,
+  gitDenyPaths: string[],
   abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const cwd = process.cwd()
@@ -199,6 +203,8 @@ async function linuxGetMandatoryDenyPaths(
       denyPaths.push(path.resolve(cwd, '.git/config'))
     }
   }
+
+  denyPaths.push(...gitDenyPaths)
 
   // Build iglob args for all patterns in one ripgrep call
   const iglobArgs: string[] = []
@@ -650,6 +656,7 @@ async function generateFilesystemArgs(
   ripgrepConfig: { command: string; args?: string[] } = { command: 'rg' },
   mandatoryDenySearchDepth: number = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
   allowGitConfig = false,
+  allowGitCommonDir = false,
   abortSignal?: AbortSignal,
 ): Promise<string[]> {
   const args: string[] = []
@@ -662,13 +669,22 @@ async function generateFilesystemArgs(
   // a denyRead tmpfs over an ancestor directory doesn't wipe them out.
   const denyWriteArgs: string[] = []
 
+  const {
+    allowPaths,
+    denyPaths: gitDenyPaths,
+  } = resolveGitCommonDirWriteAccess(
+    writeConfig?.allowOnly,
+    allowGitCommonDir,
+    allowGitConfig,
+  )
+
   // Determine initial root mount based on write restrictions
   if (writeConfig) {
     // Write restrictions: Start with read-only root, then allow writes to specific paths
     args.push('--ro-bind', '/', '/')
 
     // Allow writes to specific paths
-    for (const pathPattern of writeConfig.allowOnly || []) {
+    for (const pathPattern of allowPaths || []) {
       const normalizedPath = normalizePathForSandbox(pathPattern)
 
       logForDebugging(
@@ -725,6 +741,7 @@ async function generateFilesystemArgs(
         ripgrepConfig,
         mandatoryDenySearchDepth,
         allowGitConfig,
+        gitDenyPaths,
         abortSignal,
       )),
     ]
@@ -1036,6 +1053,7 @@ export async function wrapCommandWithSandboxLinux(
     ripgrepConfig = { command: 'rg' },
     mandatoryDenySearchDepth = DEFAULT_MANDATORY_DENY_SEARCH_DEPTH,
     allowGitConfig = false,
+    allowGitCommonDir = false,
     seccompConfig,
     abortSignal,
   } = params
@@ -1164,6 +1182,7 @@ export async function wrapCommandWithSandboxLinux(
       ripgrepConfig,
       mandatoryDenySearchDepth,
       allowGitConfig,
+      allowGitCommonDir,
       abortSignal,
     )
     bwrapArgs.push(...fsArgs)
