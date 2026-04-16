@@ -139,6 +139,69 @@ describe.if(isSupportedPlatform)('wrapWithSandbox customConfig', () => {
         },
       )
     })
+
+    it('uses custom allowGitConfig when provided', async () => {
+      const fixtureBaseDir = join(
+        tmpdir(),
+        `srt-test-git-config-${Date.now()}`,
+      )
+      const targetContent = 'UPDATED'
+
+      await withWorktreeFixture(
+        createLinkedWorktreeFixture(
+          fixtureBaseDir,
+          'linked-worktree-config',
+          'ORIGINAL',
+        ),
+        async ({ commonDir }) => {
+          const targetPath = join(commonDir, 'config')
+          const withoutOverride = await SandboxManager.wrapWithSandbox(
+            `echo '${targetContent}' > '${targetPath}'`,
+            undefined,
+            {
+              filesystem: {
+                denyRead: [],
+                allowWrite: ['.'],
+                denyWrite: [],
+                allowGitCommonDir: true,
+              },
+            },
+          )
+
+          const blockedResult = spawnSync(withoutOverride, {
+            shell: true,
+            encoding: 'utf8',
+            timeout: 10000,
+          })
+
+          expect(blockedResult.status).not.toBe(0)
+          expect(readFileSync(targetPath, 'utf8')).toBe('ORIGINAL')
+
+          const withOverride = await SandboxManager.wrapWithSandbox(
+            `echo '${targetContent}' > '${targetPath}'`,
+            undefined,
+            {
+              filesystem: {
+                denyRead: [],
+                allowWrite: ['.'],
+                denyWrite: [],
+                allowGitConfig: true,
+                allowGitCommonDir: true,
+              },
+            },
+          )
+
+          const allowedResult = spawnSync(withOverride, {
+            shell: true,
+            encoding: 'utf8',
+            timeout: 10000,
+          })
+
+          expect(allowedResult.status).toBe(0)
+          expect(readFileSync(targetPath, 'utf8').trim()).toBe(targetContent)
+        },
+      )
+    })
   })
 
   describe('with customConfig network overrides', () => {

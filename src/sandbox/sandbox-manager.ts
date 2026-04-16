@@ -532,10 +532,6 @@ function getMandatoryDenySearchDepth(): number {
   return config?.mandatoryDenySearchDepth ?? 3
 }
 
-function getAllowGitConfig(): boolean {
-  return config?.filesystem?.allowGitConfig ?? false
-}
-
 function getSeccompConfig(): SeccompConfig | undefined {
   return config?.seccomp
 }
@@ -664,6 +660,10 @@ async function wrapWithSandbox(
 
   // Check custom config to allow pseudo-terminal (can be applied dynamically)
   const allowPty = customConfig?.allowPty ?? config?.allowPty
+  const allowGitConfig =
+    customConfig?.filesystem?.allowGitConfig ??
+    config?.filesystem?.allowGitConfig ??
+    false
   const allowGitCommonDir =
     customConfig?.filesystem?.allowGitCommonDir ??
     config?.filesystem?.allowGitCommonDir ??
@@ -686,7 +686,7 @@ async function wrapWithSandbox(
         allowMachLookup: getAllowMachLookup(),
         ignoreViolations: getIgnoreViolations(),
         allowPty,
-        allowGitConfig: getAllowGitConfig(),
+        allowGitConfig,
         allowGitCommonDir,
         enableWeakerNetworkIsolation: getEnableWeakerNetworkIsolation(),
         binShell,
@@ -716,7 +716,7 @@ async function wrapWithSandbox(
         binShell,
         ripgrepConfig: getRipgrepConfig(),
         mandatoryDenySearchDepth: getMandatoryDenySearchDepth(),
-        allowGitConfig: getAllowGitConfig(),
+        allowGitConfig,
         allowGitCommonDir,
         seccompConfig: getSeccompConfig(),
         abortSignal,
